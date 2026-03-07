@@ -48,7 +48,7 @@ test: module
 		driver not loaded)
 
 # Create temporary device node
-	MAJOR=$$(awk '$2=="$(DRIVER_NAME)" {print $1}' /proc/devices) \
+	MAJOR=$$(awk '$$2=="$(DRIVER_NAME)" {print $$1}' /proc/devices); \
 	echo "Using major $$MAJOR"; \
 	sudo mknod /tmp/udp c $$MAJOR 0; \
 	sudo chmod 666 /tmp/udp
