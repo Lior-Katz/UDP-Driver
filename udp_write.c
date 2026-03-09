@@ -1,3 +1,4 @@
+#include <linux/types.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -5,6 +6,13 @@
 #include <linux/cdev.h>
 #include <linux/device/class.h>
 #include <linux/err.h>
+#include <linux/socket.h>
+#include <linux/net.h>
+#include <linux/inet.h>
+#include <linux/in.h>
+#include <linux/uio.h>
+#include <net/sock.h>
+#include <linux/kstrtox.h>
 
 #define MOD_NAME "udp_write"
 #define DEV_NAME ("udp")
@@ -52,9 +60,110 @@ struct file_operations udp_fops = {
 	.write =    udp_write,
 };
 
+result_t _parse_input(struct sockaddr_in* const address, char* data, char * const buf, size_t* const count) {
+    result_t err = -EINVAL;
+    
+    const char* ip_start = buf;
+    char* port_delim = strchr(buf, ':');
+    if (port_delim == NULL){
+        goto fail;
+    }
+    *port_delim = '\0';
+    char* port_start = port_delim + 1;
+    
+    const char* end;
+    if (!in4_pton(ip_start, port_delim - ip_start, (u8*)&address->sin_addr.s_addr, -1, &end)) {
+        goto fail;
+    }
+    if (end != port_delim) {
+        goto fail;
+    }
+    char* space = strchr(port_start, ' ');
+    if (space == NULL) {
+        goto fail;
+    }
+    *space = '\0';
+    u16 port;
+    int res = kstrtou16(port_start, 10, &port);
+    if (res != 0) {
+        err = res;
+        goto fail;
+    }
+    
+    address->sin_port = htons(port);
+    *count -= (space - buf + 1);
+    memcpy(data, space + 1, *count);
+
+    address->sin_family = AF_INET;
+    err = OK();
+fail:
+    return err;
+}
+
+result_t parse_input(struct sockaddr_in* address, char* data, const char __user * const buf, size_t* const count) {
+    char* kbuf = kmalloc((*count) + 1, GFP_KERNEL | __GFP_ZERO);
+    if (kbuf == NULL) {
+        return -ENOMEM;
+    }
+    if (copy_from_user(kbuf, buf, *count)) {
+        kfree(kbuf);
+        return -EFAULT;
+    }
+    result_t result = _parse_input(address, data, kbuf, count);
+    kfree(kbuf);
+    return result;
+}
+
+struct msghdr build_message(struct sockaddr_in* address) {
+    struct msghdr msg = {
+        .msg_name = address,
+        .msg_namelen = sizeof(*address),
+        .msg_flags = 0,
+        .msg_control = NULL,
+        .msg_controllen = 0,
+    };
+    return msg;
+}
+
 ssize_t udp_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos) {
-    LOG(INFO, "write called\n");
-    return count;
+    ssize_t retval;
+    struct sockaddr_in address = {0};
+    char* data = kmalloc(count, GFP_KERNEL | __GFP_ZERO);
+    if (data == NULL) {
+        retval = -ENOMEM;
+        goto fail_no_release;
+    }
+    size_t data_len = count;
+    retval = parse_input(&address, data, buf, &data_len);
+    CHECK_MSG(retval, "failed to parse data\n");
+
+    struct msghdr msg = build_message(&address);
+    struct kvec kv = {
+            .iov_base = data,
+            .iov_len = data_len,
+        };
+        
+    struct socket *sock = NULL;
+    int err;
+    
+    err = sock_create_kern(&init_net, PF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock);
+    if (err < 0) {
+        retval = err;
+        goto fail;
+    }
+    retval = kernel_sendmsg(sock, &msg, &kv, 1, data_len);
+    if (retval < 0) {
+        goto fail;
+    }
+    retval = count;
+
+fail:
+    if (sock != NULL) {
+        sock_release(sock);
+    }
+    kfree(data);
+fail_no_release:
+    return retval;
 }
 
 static result_t allocate_device_number(void) {
