@@ -13,14 +13,12 @@
 #include <linux/uio.h>
 #include <net/sock.h>
 #include <linux/kstrtox.h>
+#include <linux/printk.h>
 
 #define MOD_NAME "udp_write"
 #define DEV_NAME ("udp")
 #define DEV_CLS DEV_NAME
 #define UDP_WRITE_MINOR (0)
-
-#define LOG(level, fmt, ...) \
-    printk(KERN_##level MOD_NAME ": " fmt, ##__VA_ARGS__)
 
 #define RESULT_OK (0)
 #define OK() ((result_t){RESULT_OK})
@@ -159,17 +157,14 @@ fail_no_release:
 
 static result_t allocate_device_number(void) {
     result_t result = OK();
-    LOG(DEBUG, "allocating device numbers\n");
     result = alloc_chrdev_region(&device_number, UDP_WRITE_MINOR, 1, DEV_CLS);
     CHECK_COND(result >= 0);
-    LOG(INFO, "allocated %d, %d\n", MAJOR(device_number), MINOR(device_number));
 fail:
     return result;
 }
 
 static result_t register_device(void) {
     result_t result = OK();
-    LOG(DEBUG, "registering device\n");
     my_cdev = cdev_alloc();
     CHECK_COND(my_cdev != NULL, -ENOMEM);
 
@@ -177,7 +172,6 @@ static result_t register_device(void) {
     my_cdev->owner = THIS_MODULE;
     result = cdev_add(my_cdev, device_number, 1);
     CHECK(result);
-    LOG(INFO, "registered device\n");
     return result;
 
 fail:
@@ -190,21 +184,15 @@ fail:
 
 static result_t create_node(void) {
     result_t result = OK();
-    LOG(DEBUG, "creating node\n");
-    LOG(DEBUG, "creating class\n");
     cls = class_create(DEV_CLS);
     if (IS_ERR_OR_NULL(cls)) {
-        LOG(ERR, "failed creating class");
         return ERROR(PTR_ERR(cls));
     }
 
-    LOG(DEBUG, "creating device\n");
     dev = device_create(cls, NULL, device_number, NULL, DEV_NAME);
     if (IS_ERR_OR_NULL(dev)) {
-        LOG(ERR, "failed creating device node");
         return ERROR(PTR_ERR(dev));
     }
-    LOG(INFO, "node created\n");
     return result;
 }
 
@@ -212,22 +200,16 @@ static void __exit udp_write_exit(void)
 {
     if (!IS_ERR_OR_NULL(cls)) {
         if (!IS_ERR_OR_NULL(dev)) {
-            LOG(DEBUG, "deleting device %d:%d from %s\n", MAJOR(device_number), MINOR(device_number), cls->name);
             device_destroy(cls, device_number);
         }
-        LOG(DEBUG, "deleting class %s\n", cls->name);
         class_destroy(cls);
     }
 
     if (my_cdev != NULL) {
-        LOG(DEBUG, "deleting device registration\n");
         cdev_del(my_cdev);
     }
     
-    LOG(DEBUG, "unregistering device numbers\n");
     unregister_chrdev_region(device_number, 1);
-    
-    LOG(INFO, "module unloaded\n");
 }
 
 static int __init udp_write_init(void)
@@ -241,7 +223,7 @@ static int __init udp_write_init(void)
     result = create_node();
     CHECK(result);
 
-    LOG(INFO, "module loaded\n");
+    pr_info("udp_write module loaded\n");
     return 0;
 
 fail:
