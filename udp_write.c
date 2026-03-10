@@ -57,7 +57,6 @@
 typedef int result_t;
 
 ssize_t udp_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
-static void __exit test_exit(void);
 
 static dev_t device_number;
 struct cdev* my_cdev = NULL;
@@ -209,26 +208,7 @@ static result_t create_node(void) {
     return result;
 }
 
-static int __init test_init(void)
-{
-    result_t result = allocate_device_number();
-    CHECK(result);
-
-    result = register_device();
-    CHECK(result);
-
-    result = create_node();
-    CHECK(result);
-
-    LOG(INFO, "module loaded\n");
-    return 0;
-
-fail:
-    test_exit();
-    return result;
-}
-
-static void __exit test_exit(void)
+static void __exit udp_write_exit(void)
 {
     if (!IS_ERR_OR_NULL(cls)) {
         if (!IS_ERR_OR_NULL(dev)) {
@@ -243,16 +223,35 @@ static void __exit test_exit(void)
         LOG(DEBUG, "deleting device registration\n");
         cdev_del(my_cdev);
     }
-
+    
     LOG(DEBUG, "unregistering device numbers\n");
     unregister_chrdev_region(device_number, 1);
-
+    
     LOG(INFO, "module unloaded\n");
 }
 
-module_init(test_init);
-module_exit(test_exit);
+static int __init udp_write_init(void)
+{
+    result_t result = allocate_device_number();
+    CHECK(result);
+
+    result = register_device();
+    CHECK(result);
+
+    result = create_node();
+    CHECK(result);
+
+    LOG(INFO, "module loaded\n");
+    return 0;
+
+fail:
+    udp_write_exit();
+    return result;
+}
+
+module_init(udp_write_init);
+module_exit(udp_write_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Lior Katz");
-MODULE_DESCRIPTION("Minimal test driver");
+MODULE_DESCRIPTION("Character device allowing userspace to send UDP packets via write() using \"<ip>:<port> <data>\" format");
